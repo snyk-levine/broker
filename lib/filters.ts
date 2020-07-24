@@ -1,14 +1,49 @@
-const minimatch = require('minimatch');
-const pathRegexp = require('path-to-regexp');
-const qs = require('qs');
-const path = require('path');
-const undefsafe = require('undefsafe');
-const replace = require('./replace-vars');
-const authHeader = require('./auth-header');
-const tryJSONParse = require('./try-json-parse');
-const logger = require('./log');
+import * as minimatch from 'minimatch';
+import * as path from 'path';
+import * as pathRegexp from 'path-to-regexp';
+import * as qs from 'qs';
+import * as undefsafe from 'undefsafe';
+import * as config from './config';
+import * as logger from './log';
+import { replaceVars } from './replace-vars';
+import * as tryJSONParse from './try-json-parse';
 
-const validateHeaders = (headerFilters, requestHeaders = []) => {
+type BodyFilter = { path: string; value: string[] };
+type BodyRegexFilter = { path: string; regex: string; value: string[] };
+type QueryFilter = { queryParam: string; values: string[] };
+type HeaderFilter = { header: string; values: string[] };
+
+type BasicAuth = { scheme: 'basic'; username: string; password: string };
+type TokenAuth = { scheme: 'token'; token: string };
+
+interface Rule {
+  method: string;
+  path: string;
+  origin: string;
+  valid?: (BodyFilter | BodyRegexFilter | QueryFilter | HeaderFilter)[];
+  stream?: boolean;
+  auth: BasicAuth | TokenAuth;
+}
+
+function getAuthHeader(auth: BasicAuth | TokenAuth): string | void {
+  if (auth.scheme === 'token') {
+    return `Token ${replaceVars(auth.token, config)}`;
+  }
+
+  if (auth.scheme === 'basic') {
+    const basicAuth = [
+      replaceVars(auth.username, config),
+      replaceVars(auth.password, config),
+    ].join(':');
+
+    return `Basic ${Buffer.from(basicAuth).toString('base64')}`;
+  }
+}
+
+const validateHeaders = (
+  headerFilters: HeaderFilter[],
+  requestHeaders = [],
+) => {
   for (const filter of headerFilters) {
     const headerValue = requestHeaders[filter.header];
 
@@ -24,12 +59,9 @@ const validateHeaders = (headerFilters, requestHeaders = []) => {
   return true;
 };
 
-// reads config that defines
-module.exports = (ruleSource) => {
-  let rules = [];
-  const config = require('./config');
+export function createFilters(ruleSource: Rule[]) {
+  let rules: Rule[] = [];
 
-  // polymorphic support
   if (Array.isArray(ruleSource)) {
     rules = ruleSource;
   } else if (ruleSource) {
@@ -52,38 +84,63 @@ module.exports = (ruleSource) => {
   logger.info({ rulesCount: rules.length }, 'loading new rules');
 
   // array of entries with
-  const tests = rules.map((entry) => {
-    const keys = [];
-    let { method, origin, path: entryPath, valid } = entry;
-    const { stream } = entry;
-    method = (method || 'get').toLowerCase();
-    valid = valid || [];
+  const tests = rules.map((rule) => {
+    const method = rule.method.toLowerCase() ?? 'get';
+    const valid = rule.valid ?? [];
 
-    const bodyFilters = valid.filter((v) => !!v.path && !v.regex);
-    const bodyRegexFilters = valid.filter((v) => !!v.path && !!v.regex);
-    const queryFilters = valid.filter((v) => !!v.queryParam);
-    const headerFilters = valid.filter((v) => !!v.header);
+    const bodyRegexFilters: BodyRegexFilter[] = [];
+    const bodyFilters: BodyFilter[] = [];
+    const queryFilters: QueryFilter[] = [];
+    const headerFilters: HeaderFilter[] = [];
+
+    valid.forEach((v) => {
+      if ('path' in v && 'regex' in v) {
+        bodyRegexFilters.push(v);
+      }
+
+      if ('path' in v && !('regex' in v)) {
+        bodyFilters.push(v);
+      }
+
+      if ('queryParam' in v) {
+        queryFilters.push(v);
+      }
+
+      if ('header' in v) {
+        headerFilters.push(v);
+      }
+    });
 
     // now track if there's any values that we need to interpolate later
     const fromConfig = {};
 
-    // slightly bespoke version of replace-vars.js
-    entryPath = (entryPath || '').replace(/(\${.*?})/g, (_, match) => {
-      const key = match.slice(2, -1); // ditch the wrappers
-      fromConfig[key] = config[key] || '';
-      return ':' + key;
-    });
-
-    origin = replace(origin, config);
+    // slightly bespoke version of replace-vars.ts
+    let entryPath =
+      'path' in rule
+        ? rule.path.replace(/(\${.*?})/g, (_, match) => {
+            const key = match.slice(2, -1); // Remove the wrapping `${` and `}` chars
+            fromConfig[key] = config[key] ?? '';
+            return ':' + key;
+          })
+        : '/';
 
     if (entryPath[0] !== '/') {
       entryPath = '/' + entryPath;
     }
 
+    const origin = replaceVars(rule.origin, config);
+
     logger.info({ method, path: entryPath }, 'adding new filter rule');
+
+    const keys: pathRegexp.Key[] = [];
     const regexp = pathRegexp(entryPath, keys);
 
-    return (req) => {
+    return (req: {
+      method: string;
+      url: string;
+      headers: any;
+      body: unknown;
+    }) => {
       // check the request method
       if (req.method.toLowerCase() !== method && method !== 'any') {
         return false;
@@ -179,28 +236,22 @@ module.exports = (ruleSource) => {
       );
 
       querystring = querystring ? `?${querystring}` : '';
+
       return {
         url: origin + url + querystring,
-        auth: entry.auth && authHeader(entry.auth),
-        stream,
+        auth: rule.auth && getAuthHeader(rule.auth),
+        stream: rule.stream,
       };
     };
   });
 
   return (payload, callback) => {
-    let res = false;
     logger.debug({ rulesCount: tests.length }, 'looking for a rule match');
 
-    for (const test of tests) {
-      res = test(payload);
-      if (res) {
-        break;
-      }
-    }
-    if (!res) {
-      return callback(Error('blocked'));
+    if (tests.some((test) => test(payload))) {
+      return callback(null, true);
     }
 
-    return callback(null, res);
+    return callback(Error('blocked'));
   };
-};
+}

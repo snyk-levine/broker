@@ -1,7 +1,6 @@
 import { readFileSync } from 'fs';
 import * as path from 'path';
-
-import * as Filters from '../../lib/filters';
+import { createFilters } from '../../lib/filters';
 
 const jsonBuffer = (body) => Buffer.from(JSON.stringify(body));
 
@@ -16,7 +15,7 @@ describe('filters', () => {
   describe('on URL', () => {
     describe('for GitHub private filters', () => {
       const rules = JSON.parse(loadFixture(path.join('accept', 'github.json')));
-      const filter = Filters(rules.private);
+      const filter = createFilters(rules.private);
 
       it('should allow valid /repos path to manifest', () => {
         const url = '/repos/angular/angular/contents/package.json';
@@ -64,7 +63,7 @@ describe('filters', () => {
 
   describe('on body', () => {
     const rules = JSON.parse(loadFixture('relay.json'));
-    const filter = Filters(rules);
+    const filter = createFilters(rules);
 
     it('allows requests that match', (done) => {
       filter(
@@ -312,7 +311,7 @@ describe('filters', () => {
 
   describe('on querystring', () => {
     const rules = JSON.parse(loadFixture('relay.json'));
-    const filter = Filters(rules);
+    const filter = createFilters(rules);
 
     it('permits requests to an allowed path', (done) => {
       filter(
@@ -409,7 +408,7 @@ describe('filters', () => {
 
   describe('on query and body', () => {
     const rules = JSON.parse(loadFixture('relay.json'));
-    const filter = Filters(rules);
+    const filter = createFilters(rules);
 
     it('allows a request filtered on query and body', (done) => {
       filter(
@@ -531,7 +530,9 @@ describe('filters', () => {
   });
 
   describe('on headers', () => {
-    const filter = Filters(require(__dirname + '/../fixtures/relay.json'));
+    const filter = createFilters(
+      require(__dirname + '/../fixtures/relay.json'),
+    );
 
     it('should block if the provided header does not match those specified in the whitelist', (done) => {
       filter(
@@ -567,7 +568,7 @@ describe('filters', () => {
 
   describe('for GitHub', () => {
     const rules = JSON.parse(loadFixture(path.join('accept', 'github.json')));
-    const filter = Filters(rules.private);
+    const filter = createFilters(rules.private);
 
     it('should allow the sha media type header when requesting a branch SHA to prevent patch information being returned', (done) => {
       const url = '/repos/owner/repo-name/commits/master';
@@ -609,7 +610,7 @@ describe('filters', () => {
 
 describe('with auth', () => {
   const rules = JSON.parse(loadFixture('relay.json'));
-  const filter = Filters(rules);
+  const filter = createFilters(rules);
 
   it('allows correct basic auth requests', (done) => {
     filter(
