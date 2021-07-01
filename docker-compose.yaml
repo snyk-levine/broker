@@ -1,0 +1,24 @@
+version: '3.9'
+services:
+  azure:
+    environment:
+      - BROKER_TOKEN=${BROKER_TOKEN_AZURE}
+      - AZURE_REPOS_TOKEN=${AZURE_REPOS_TOKEN}
+      - AZURE_REPOS_ORG=${AZURE_REPOS_ORG}
+      - AZURE_REPOS_HOST=${AZURE_REPOS_HOST}
+      - GIT_CLIENT_URL=http://code-agent:3000
+    image: snyk/broker:azure-repos
+  bitbucket-server:
+    environment:
+      - BROKER_TOKEN=${BROKER_TOKEN_BITBUCKET_SERVER}
+      - BITBUCKET_USERNAME=${BITBUCKET_USERNAME}
+      - BITBUCKET_PASSWORD=${BITBUCKET_PASSWORD}
+      - BITBUCKET=${BITBUCKET}
+      - BITBUCKET_API=${BITBUCKET_API}
+      - GIT_CLIENT_URL=http://code-agent:3000
+    image: snyk/broker:bitbucket-server
+  code-agent:
+    environment:
+      - BASE_URL=${BASE_URL}
+      - SESSION_TOKEN=${SESSION_TOKEN}
+    image: snyk/code-agent
